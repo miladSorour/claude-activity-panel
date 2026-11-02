@@ -1,5 +1,5 @@
 {
   "name": "miladsorour-plugins",
   "owner": { "name": "miladSorour" },
-  "plugins": [{ "name": "claude-activity-panel", "source": "./" }]
+  "plugins": [{ "name": "activity-log", "source": "./" }]
 }
