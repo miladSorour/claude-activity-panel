@@ -67,6 +67,20 @@ const english = atom(
   { shape: 'english-1' },
 )
 
+// Added to the coordinator's system prompt so each subagent runs on the cheapest model that fits its work.
+const MODEL_ROUTING = {
+  id: 'activity-log:model-routing',
+  scope: 'session',
+  text: [
+    '# Choosing a model for subagents',
+    'When you delegate with the Agent tool, set `model` by the kind of work, cheapest first:',
+    '- `haiku`: searching and listing. Grep, glob, find, counting files, locating a symbol or file, reading short excerpts.',
+    '- `sonnet`: reading and understanding. Summarising files or docs, explaining code, comparing a few files, a first-pass review.',
+    '- Your own model: designing a change, editing code, debugging a failure, and any answer the user must trust without rechecking.',
+    'When one Grep or Glob call answers the question, run it yourself: a subagent for that costs more than it saves.',
+  ].join('\n'),
+} as const
+
 // ── English coach: one Haiku call per prompt, run off a timer so it never holds Claude up.
 
 // English coach: one Haiku call per prompt, run off a timer so it never holds Claude up.
@@ -1200,6 +1214,12 @@ export const register: Register = on => {
       $.clock.after(0, () => void coach($, text))
     }
     return ran
+  }).catch(($, e, next) => next(e))
+
+  on('prompt.compose', async ($, e, next) => {
+    const composed = await next(e)
+    if (!e.tools.includes('Agent')) return composed
+    return { sections: [...composed.sections, MODEL_ROUTING] }
   }).catch(($, e, next) => next(e))
 
   on('turn.start', async ($, e, next) => {

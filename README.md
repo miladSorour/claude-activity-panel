@@ -30,6 +30,7 @@ Real screenshots from the Claude desktop app. The English one is cropped to leav
 - **Cost:** model cards with new, reused and written tokens; who spent what; and what each source added to the context.
 - **Plugins:** uses across your last 20 sessions, an **A/B test** to see whether a plugin is worth its tokens, and a list of all installed plugins with turn on / turn off buttons.
 - **Tips:** each tip says what happened, why it costs you, and what to try. Covers low cache reuse, subagents on a big model that only read files, re-read files, repeated errors, a large context, and unused plugins.
+- **Model routing:** adds a short section to Claude's system prompt: search subagents run on Haiku, reading and summarising on Sonnet, and design, edits and debugging stay on Claude's own model. Watch the Cost tab to see the saving.
 - **Dock:** a one-line bar above the input that opens to the full panel. You can move the panel to the right side.
 - **English coach (optional):** checks only what you type, not pasted text. It gives a corrected version, the fixes, a lesson, a better prompt you can use, practice cards from your own mistakes, and band per week. Turn it off in the English tab.
 

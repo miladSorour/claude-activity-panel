@@ -161,3 +161,17 @@ test('the band above the prompt opens into the panel, on every surface', async (
   }
 })
 
+
+test('model routing joins the coordinator prompt, never a subagent one', async ($, on) => {
+  on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'You are Claude Code.', scope: 'shared' }] }))
+  const input = { model: 'claude-opus-5-5', promptModel: 'claude-opus-5-5', surfaces: [], outputStyle: null, traits: [] }
+
+  const coordinator = await $.prompt.compose({ ...input, tools: ['Agent', 'Grep', 'Read'] })
+  const routing = coordinator.sections.find(section => section.id === 'activity-log:model-routing')
+  expect(coordinator.sections[0]?.id).toBe('intro')
+  expect(routing?.scope).toBe('session')
+  expect(routing?.text).toContain('`haiku`: searching')
+
+  const subagent = await $.prompt.compose({ ...input, tools: ['Grep', 'Read'] })
+  expect(subagent.sections.some(section => section.id === 'activity-log:model-routing')).toBe(false)
+})
