@@ -182,9 +182,11 @@ export const hintKey = (a: Activity) => `${a.tool ?? a.kind}:${(a.brief ?? '').s
 // Word-level diff for the English coach: each piece kept, removed or added.
 export type Piece = { text: string; op: 'same' | 'del' | 'ins' }
 
-export function wordDiff(before: string, after: string): Piece[] {
-  const a = before.split(/\s+/).filter(Boolean)
-  const b = after.split(/\s+/).filter(Boolean)
+export const wordDiff = (before: string, after: string) =>
+  diff(before.split(/\s+/).filter(Boolean), after.split(/\s+/).filter(Boolean), ' ')
+
+// Pieces of `a` kept, removed or added to make `b`; with `join`, neighbours of one kind merge into one piece.
+function diff(a: string[], b: string[], join?: string): Piece[] {
   const n = a.length
   const m = b.length
   const lcs: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0))
@@ -197,7 +199,7 @@ export function wordDiff(before: string, after: string): Piece[] {
   const out: Piece[] = []
   const push = (text: string, op: Piece['op']) => {
     const last = out[out.length - 1]
-    if (last && last.op === op) last.text += ` ${text}`
+    if (join !== undefined && last && last.op === op) last.text += `${join}${text}`
     else out.push({ text, op })
   }
   let i = 0
@@ -450,3 +452,22 @@ export function changesOf(before: string, after: string): Change[] {
   flushRun()
   return out
 }
+
+// What each release changed, newest first: one short line per change, shown in Settings → Version history.
+export const CHANGELOG: { version: string; date: string; changes: string[] }[] = [
+  {
+    version: '0.3.0',
+    date: '2026-11-02',
+    changes: ['Added Settings tab', 'Edit the model routing prompt in Settings → System prompt', 'Added version history'],
+  },
+  {
+    version: '0.2.0',
+    date: '2026-11-02',
+    changes: ['Model routing in the system prompt: a model and effort for each subagent', 'Reopen button for a closed panel'],
+  },
+  {
+    version: '0.1.0',
+    date: '2026-11-01',
+    changes: ['First release: Flow, Cost, Plugins, Tips and English tabs'],
+  },
+]

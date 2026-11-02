@@ -27,7 +27,8 @@ export type Activity = {
   childLoop?: string
 }
 
-export type Tab = 'flow' | 'cost' | 'plugins' | 'tips' | 'english'
+export type Tab = 'flow' | 'cost' | 'plugins' | 'tips' | 'english' | 'settings'
+
 
 export type SourceTotal = { calls: number; addedTokens: number }
 

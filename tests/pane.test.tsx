@@ -126,6 +126,10 @@ test('every tab draws, on every surface', async ($, on) => {
     if (!(await ui.find({ type: 'Text', text: /^1\.$/ }))) await ui.press({ key: 'en-changes' })
     expect((await ui.find({ type: 'Text', text: /^1\.$/ }))?.text).toBe('1.')
 
+    await ui.press({ key: 'tab-settings' })
+    expect((await ui.find({ type: 'Text', text: /^Model routing$/ }))?.text).toBe('Model routing')
+    expect(await ui.find({ key: 'routing-reset' })).toBeDefined()
+
     await ui.press({ key: 'tab-flow' })
     await ui.unmount()
   }
@@ -170,8 +174,80 @@ test('model routing joins the coordinator prompt, never a subagent one', async (
   const routing = coordinator.sections.find(section => section.id === 'activity-log:model-routing')
   expect(coordinator.sections[0]?.id).toBe('intro')
   expect(routing?.scope).toBe('session')
-  expect(routing?.text).toContain('`haiku`: searching')
+  expect(routing?.text).toContain('| `opus` | `xhigh` or `max` |')
 
   const subagent = await $.prompt.compose({ ...input, tools: ['Grep', 'Read'] })
   expect(subagent.sections.some(section => section.id === 'activity-log:model-routing')).toBe(false)
+})
+
+test('a closed right-side panel leaves a button above the prompt to open it again', async ($, on) => {
+  mock.clock(on)
+  const opened: string[] = []
+  let panes: { id: string }[] = []
+  on('store.get', () => ({ value: undefined }))
+  on('store.set', () => ({ value: undefined }))
+  on('tool.list', () => ({ value: [] }))
+  on('command.register', (_, e) => ({ value: { command: e.name } }))
+  on('ui.open', (_, e) => {
+    opened.push(e.id)
+    panes = [{ id: e.id }]
+    return { value: { isPlaced: true } }
+  })
+  on('ui.close', () => {
+    panes = []
+    return { value: undefined }
+  })
+  on('ui.panes', () => ({ value: panes }))
+  // The engine's own band: nothing to draw.
+  on('ui.render', ($, e) => {
+    const { Box } = $.ui.resolve(e)
+    return <Box />
+  })
+  on('fs.write', () => ({ value: undefined }))
+  on('fs.exists', () => ({ value: true }))
+  on('fs.read', () => ({ value: '' }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+
+  await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
+  const band = await $.ui.mount({ plugin: 'activity-log', component: 'AbovePrompt', props: { hasSurvey: false }, surface: 'desktop' })
+  await band.press({ key: 'band-toggle' })
+  await band.press({ key: 'move-right' })
+  expect(opened).toEqual(['activity-log'])
+
+  // While the pane is up the band stays out of the way; once closed, it offers the way back.
+  expect(await band.find({ key: 'reopen-pane' })).toBeUndefined()
+  panes = []
+  await band.unmount()
+  const closed = await $.ui.mount({ plugin: 'activity-log', component: 'AbovePrompt', props: { hasSurvey: false }, surface: 'desktop' })
+  await closed.press({ key: 'reopen-pane' })
+  expect(opened).toEqual(['activity-log', 'activity-log'])
+  await closed.unmount()
+})
+
+test('Settings has a menu on the right: System prompt and a short version history', async ($, on) => {
+  mock.clock(on)
+  on('store.get', () => ({ value: undefined }))
+  on('store.set', () => ({ value: undefined }))
+  on('fs.exists', () => ({ value: true }))
+  on('fs.read', () => ({ value: 'route searches to haiku' }))
+  on('fs.write', () => ({ value: undefined }))
+  on('tool.list', () => ({ value: [] }))
+  on('command.register', (_, e) => ({ value: { command: e.name } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+
+  await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await pane.press({ key: 'tab-settings' })
+  expect((await pane.find({ type: 'Text', text: /^Model routing$/ }))?.text).toBe('Model routing')
+  expect(await pane.find({ key: 'settings-history' })).toBeDefined()
+
+  await pane.press({ key: 'settings-history' })
+  expect((await pane.find({ type: 'Text', text: /^Version history$/ }))?.text).toBe('Version history')
+  expect((await pane.find({ type: 'Text', text: /this version/ }))?.text).toMatch(/^v0\.3\.0 · /)
+  expect((await pane.find({ type: 'Text', text: /Added Settings tab/ }))?.text).toBe('  • Added Settings tab')
+  expect(await pane.find({ type: 'Text', text: /^Model routing$/ })).toBeUndefined()
+
+  await pane.press({ key: 'settings-prompt' })
+  expect((await pane.find({ type: 'Text', text: /^Model routing$/ }))?.text).toBe('Model routing')
+  await pane.unmount()
 })

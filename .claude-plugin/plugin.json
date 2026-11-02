@@ -1,6 +1,6 @@
 {
   "name": "activity-log",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Live Activity panel: flow of coordinator and subagents, cost and cache per step, plugin usage with A/B test, tips, and an IELTS English coach",
   "author": {
     "name": "miladSorour"

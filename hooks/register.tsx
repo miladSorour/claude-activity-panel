@@ -1,8 +1,22 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Frozen, Register, RenderInput } from 'claude-code'
 
-import type { AbTest, Activity, Card, English, EnglishEntry, Installed, Kind, ModelTotal, Placement, SessionSummary, Skills, Tab } from '../types'
+import type {
+  AbTest,
+  Activity,
+  Card,
+  English,
+  EnglishEntry,
+  Installed,
+  Kind,
+  ModelTotal,
+  Placement,
+  SessionSummary,
+  Skills,
+  Tab,
+} from '../types'
 import {
+  CHANGELOG,
   COLOR,
   abStats,
   changesOf,
@@ -67,19 +81,59 @@ const english = atom(
   { shape: 'english-1' },
 )
 
-// Added to the coordinator's system prompt so each subagent runs on the cheapest model that fits its work.
-const MODEL_ROUTING = {
-  id: 'activity-log:model-routing',
-  scope: 'session',
-  text: [
-    '# Choosing a model for subagents',
-    'When you delegate with the Agent tool, set `model` by the kind of work, cheapest first:',
-    '- `haiku`: searching and listing. Grep, glob, find, counting files, locating a symbol or file, reading short excerpts.',
-    '- `sonnet`: reading and understanding. Summarising files or docs, explaining code, comparing a few files, a first-pass review.',
-    '- Your own model: designing a change, editing code, debugging a failure, and any answer the user must trust without rechecking.',
-    'When one Grep or Glob call answers the question, run it yourself: a subagent for that costs more than it saves.',
-  ].join('\n'),
-} as const
+// Added to the coordinator's system prompt so each subagent runs on the cheapest model and effort that fit its work.
+// Written to ~/.claude/activity-panel/model-routing.md on first run; the person edits that file, and an empty file turns it off.
+const DEFAULT_MODEL_ROUTING = [
+  '# Choosing a model and effort for subagents',
+  'These are the user\'s instructions for the Agent tool\'s `model` and `effort`: set both on every subagent you start, using the cheapest pair that will get the work right.',
+  '',
+  '| Work | `model` | `effort` |',
+  '| --- | --- | --- |',
+  '| Searching and listing: grep, glob, find, counting files, locating a symbol or file | `haiku` | `low` |',
+  '| Collecting facts across many files, reading short excerpts | `haiku` | `medium` |',
+  '| Reading and understanding: summarising files or docs, explaining code, comparing a few files | `sonnet` | `medium` |',
+  '| A first-pass review, planning a small change, writing tests that follow an existing pattern | `sonnet` | `high` |',
+  '| Designing a change across modules, debugging a hard failure, a correctness or security review | `opus` | `high` |',
+  '| The hardest problems: subtle concurrency or data-loss bugs, architecture decisions, a review that must miss nothing | `opus` | `xhigh` or `max` |',
+  '',
+  '- Start one step lower when unsure, and step up only when the result comes back thin or wrong.',
+  '- A fork (`subagent_type: "fork"`) always runs on your own model and effort: set neither.',
+  '- When one Grep or Glob call answers the question, run it yourself: a subagent for that costs more than it saves.',
+  '- Work that leans on this conversation\'s context stays with you rather than being re-explained to a subagent.',
+  '',
+].join('\n')
+const ROUTING_ID = 'activity-log:model-routing'
+let routingPath = ''
+let routingText = DEFAULT_MODEL_ROUTING.trim()
+// What the person has typed in the System prompt tab and not saved yet.
+let routingDraft: string | undefined
+// The coordinator's system prompt as last composed, saved next to the routing file so the person can read it.
+let promptPath = ''
+let lastPrompt = ''
+let lastPromptAt = 0
+let lastSections: { id: string; scope: string; text: string }[] = []
+let openSection = ''
+// Which page the Settings tab shows; its menu on the right switches between them.
+let settingsPage: 'prompt' | 'history' = 'prompt'
+
+async function loadRouting($: EngineInterface) {
+  if (!routingPath) return
+  try {
+    if (!(await $.fs.exists(routingPath))) await $.fs.write(routingPath, DEFAULT_MODEL_ROUTING)
+    routingText = (await $.fs.read(routingPath)).trim()
+  } catch {
+    routingText = DEFAULT_MODEL_ROUTING.trim()
+  }
+}
+
+async function saveRouting($: EngineInterface, text: string) {
+  const clean = text.trim()
+  await $.fs.write(routingPath, clean ? `${clean}\n` : '')
+  routingDraft = undefined
+  await loadRouting($)
+  await update($, tick, n => n + 1)
+  await $.ui.toast(clean ? 'Model routing saved: it applies from your next message.' : 'Model routing is off.')
+}
 
 // ── English coach: one Haiku call per prompt, run off a timer so it never holds Claude up.
 
@@ -310,6 +364,7 @@ async function drawPane(
     ['plugins', 'Plugins'],
     ['tips', tipList.length ? `Tips ${tipList.length}` : 'Tips'],
     ['english', 'English'],
+    ['settings', 'Settings'],
   ]
   const tabs = (
     <Box flexDirection="row" columnGap={2} flexWrap="wrap">
@@ -920,7 +975,111 @@ async function drawPane(
     </Box>
   )
 
-  const body = v.tab === 'flow' ? flow : v.tab === 'cost' ? costTab : v.tab === 'plugins' ? pluginsTab : v.tab === 'tips' ? tipsTab : englishTab
+  // ── Settings: the chosen page on the left, the menu of pages on the right.
+  const surface = $.ui.resolve(e)
+  const Input = 'Input' in surface ? surface.Input : undefined
+  const redraw = () => update($, tick, n => n + 1)
+  const goTo = (page: typeof settingsPage) => () => {
+    settingsPage = page
+    void redraw()
+  }
+  const toggleSection = (id: string) => () => {
+    openSection = openSection === id ? '' : id
+    void redraw()
+  }
+  // System prompt: the editable routing section, then every section Claude last received.
+  const promptPage = (
+    <Box flexDirection="column" gap={1}>
+      <Text bold>Model routing</Text>
+      <Text dimColor wrap="wrap">
+        Added to Claude's system prompt whenever it can start subagents. Edit it and press Enter to save; save it empty to turn it off.
+      </Text>
+      {Input ? (
+        <Input
+          key="routing-input"
+          rows={8}
+          value={routingDraft ?? routingText}
+          submitLabel="save"
+          onInput={value => {
+            routingDraft = value
+          }}
+          onSubmit={value => void saveRouting($, value)}
+        />
+      ) : (
+        <Text wrap="wrap">{routingText || '(off)'}</Text>
+      )}
+      <Box flexDirection="row" columnGap={2}>
+        <Button key="routing-reset" plain dimColor label="reset to default" onPress={() => void saveRouting($, DEFAULT_MODEL_ROUTING)} />
+        <Text dimColor wrap="truncate-end">
+          {routingPath}
+        </Text>
+      </Box>
+      <Text bold>{lastPromptAt ? `System prompt Claude received at ${clock(lastPromptAt)}` : 'System prompt'}</Text>
+      {lastSections.length === 0 && <Text dimColor>Appears after your next message.</Text>}
+      {lastSections.map(s => (
+        <Box flexDirection="column">
+          <Button
+            key={`section-${s.id}`}
+            plain
+            dimColor={s.id !== ROUTING_ID}
+            label={`${openSection === s.id ? '▾' : '▸'} ${s.id} · ${s.scope} · ${s.text.length} chars`}
+            onPress={toggleSection(s.id)}
+          />
+          {openSection === s.id && <Text wrap="wrap">{s.text}</Text>}
+        </Box>
+      ))}
+    </Box>
+  )
+  // Version history: what each release of the panel changed, one short line per change.
+  const historyPage = (
+    <Box flexDirection="column" gap={1}>
+      <Text bold>Version history</Text>
+      {CHANGELOG.map((release, i) => (
+        <Box flexDirection="column">
+          <Text bold={i === 0} dimColor={i > 0}>
+            {`v${release.version} · ${release.date}${i === 0 ? ' · this version' : ''}`}
+          </Text>
+          {release.changes.map(change => (
+            <Text dimColor={i > 0} wrap="wrap">{`  • ${change}`}</Text>
+          ))}
+        </Box>
+      ))}
+    </Box>
+  )
+  const SETTINGS_MENU: [typeof settingsPage, string][] = [
+    ['prompt', 'System prompt'],
+    ['history', 'Version history'],
+  ]
+  const settingsTab = (
+    <Box flexDirection="row" columnGap={2}>
+      <Box flexDirection="column" flexGrow={1} flexShrink={1}>
+        {settingsPage === 'history' ? historyPage : promptPage}
+      </Box>
+      <Box flexDirection="column" flexShrink={0} width={20} rowGap={1}>
+        <Text dimColor>Settings</Text>
+        <Box flexDirection="column">
+          {SETTINGS_MENU.map(([id, name]) => (
+            <Box key={`settings-row-${id}`} paddingX={1} backgroundColor={settingsPage === id ? 'promptBorder' : undefined}>
+              <Button key={`settings-${id}`} plain dimColor={settingsPage !== id} label={name} onPress={goTo(id)} />
+            </Box>
+          ))}
+        </Box>
+      </Box>
+    </Box>
+  )
+
+  const body =
+    v.tab === 'flow'
+      ? flow
+      : v.tab === 'cost'
+        ? costTab
+        : v.tab === 'plugins'
+          ? pluginsTab
+          : v.tab === 'tips'
+            ? tipsTab
+            : v.tab === 'settings'
+              ? settingsTab
+              : englishTab
 
   const footer = (
     <Text dimColor>
@@ -1161,6 +1320,9 @@ export const register: Register = on => {
     sessionId = `${stamp}_${project}`
     logPath = `${homeDir}/.claude/activity-logs/${sessionId}.log`
     logLines = []
+    routingPath = `${homeDir}/.claude/activity-panel/model-routing.md`
+    promptPath = `${homeDir}/.claude/activity-panel/last-system-prompt.md`
+    await loadRouting($)
 
     const stored = ((await $.store.get('sessions')) as SessionSummary[] | undefined) ?? []
     await update($, history, () => stored.filter(s => s.id !== sessionId))
@@ -1192,6 +1354,10 @@ export const register: Register = on => {
       name: 'activity',
       description: 'Open the live activity pane (flow, cost, plugins, tips, English coach)',
     })
+    await $.command.register({
+      name: 'model-routing',
+      description: 'Show the model routing prompt and the file to edit it in',
+    })
     $.clock.after(0, () => void loadInstalls($))
     if (where === 'right') void $.ui.open({ id: PANE, title: 'Activity' })
 
@@ -1216,14 +1382,35 @@ export const register: Register = on => {
     return ran
   }).catch(($, e, next) => next(e))
 
+  on('command.run', { command: 'model-routing' }, async $ => {
+    await loadRouting($)
+    const state = routingText ? routingText : '(empty: model routing is off)'
+    const sent = lastPromptAt
+      ? `Last system prompt for Claude: ${clock(lastPromptAt)}, ${lastPrompt.includes(ROUTING_ID) ? 'with' : 'without'} this section. Full text: ${promptPath}`
+      : 'No system prompt composed since the mod loaded: send a message first.'
+    return { text: `Edit ${routingPath} to change it. It is read again on every turn.\n${sent}\n\n${state}` }
+  })
+
   on('prompt.compose', async ($, e, next) => {
     const composed = await next(e)
     if (!e.tools.includes('Agent')) return composed
-    return { sections: [...composed.sections, MODEL_ROUTING] }
+    const sections = routingText
+      ? [...composed.sections, { id: ROUTING_ID, text: routingText, scope: 'session' as const }]
+      : composed.sections
+    const prompt = sections.map(s => `<!-- section: ${s.id} (${s.scope}) -->\n${s.text}`).join('\n\n')
+    if (promptPath && prompt !== lastPrompt) {
+      lastPrompt = prompt
+      lastPromptAt = await $.clock.now()
+      lastSections = sections.map(s => ({ id: s.id, scope: s.scope, text: s.text }))
+      await $.fs.write(promptPath, prompt)
+      await update($, tick, n => n + 1)
+    }
+    return { sections }
   }).catch(($, e, next) => next(e))
 
   on('turn.start', async ($, e, next) => {
     if (!e.agentId) {
+      await loadRouting($)
       currentTurn = e.turnId
       const id = e.turnId
       const own = ownWords(e.text)
@@ -1413,7 +1600,17 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e) => drawPane($, e, 'pane'))
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (e.props.hasSurvey || (await read($, placement)) === 'right') return next(e)
+    if (e.props.hasSurvey) return next(e)
+    if ((await read($, placement)) === 'right') {
+      // A closed right-side pane leaves a one-line way back, since /activity is not in every surface's menu.
+      if ((await $.ui.panes()).some(pane => pane.id === PANE)) return next(e)
+      const { Box, Button } = $.ui.resolve(e)
+      return (
+        <Box flexDirection="row">
+          <Button key="reopen-pane" plain dimColor label="▸ open Activity panel" onPress={() => void $.ui.open({ id: PANE, title: 'Activity' })} />
+        </Box>
+      )
+    }
     bandId = e.requestId
     return drawPane($, e, 'band')
   })

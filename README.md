@@ -30,7 +30,8 @@ Real screenshots from the Claude desktop app. The English one is cropped to leav
 - **Cost:** model cards with new, reused and written tokens; who spent what; and what each source added to the context.
 - **Plugins:** uses across your last 20 sessions, an **A/B test** to see whether a plugin is worth its tokens, and a list of all installed plugins with turn on / turn off buttons.
 - **Tips:** each tip says what happened, why it costs you, and what to try. Covers low cache reuse, subagents on a big model that only read files, re-read files, repeated errors, a large context, and unused plugins.
-- **Model routing:** adds a short section to Claude's system prompt: search subagents run on Haiku, reading and summarising on Sonnet, and design, edits and debugging stay on Claude's own model. Watch the Cost tab to see the saving.
+- **Model routing:** adds a short section to Claude's system prompt: picks a model (Haiku, Sonnet or Opus) and an effort level (low to max) for each subagent by the kind of work. The default is written to `~/.claude/activity-panel/model-routing.md` on first run; edit that file to change the rules (it is read again every turn), or empty it to turn routing off. `/model-routing` shows the current text.
+- **Settings tab:** a menu on the right with two pages. **System prompt** lets you edit the model routing text (Enter saves, **reset to default** brings back the default) and browse every section of the system prompt Claude last received, which is also saved to `~/.claude/activity-panel/last-system-prompt.md`. **Version history** lists what each release of the panel changed, one short line per change. Watch the Cost tab to see the saving.
 - **Dock:** a one-line bar above the input that opens to the full panel. You can move the panel to the right side.
 - **English coach (optional):** checks only what you type, not pasted text. It gives a corrected version, the fixes, a lesson, a better prompt you can use, practice cards from your own mistakes, and band per week. Turn it off in the English tab.
 
@@ -44,7 +45,53 @@ In a terminal session:
 /plugin install activity-log@miladsorour-plugins
 ```
 
-Choose the user scope when asked. The panel then opens in every session. Reopen or close it with `/activity`.
+Choose the user scope when asked. The panel then opens in every session. Reopen or close it with `/activity`, or with **▸ open Activity panel** above the input box when the panel is on the right and closed.
+
+## Requirements
+
+Claude Code **2.1.309 or newer**. The panel uses mod APIs that older versions don't have (text fields, `prompt.compose`), and older versions refuse to load it.
+
+## Update
+
+### 1. Update Claude Code
+
+- **Desktop app:** it updates itself; restart the app to apply a downloaded update.
+- **Terminal (`claude` CLI):**
+
+  ```bash
+  claude --version
+  claude update
+  ```
+
+  If `claude --version` shows an older version than the desktop app, your terminal uses a separate install: `claude update` (or your package manager) updates it.
+
+### 2. Update the panel
+
+In a Claude Code session:
+
+```
+/plugin marketplace update miladsorour-plugins
+/plugin update activity-log@miladsorour-plugins
+```
+
+Or from a terminal:
+
+```bash
+claude plugin marketplace update miladsorour-plugins
+claude plugin update activity-log@miladsorour-plugins
+```
+
+Then start a new session (or restart the app): a plugin update applies on restart. **Settings → Version history** shows the version you're running and what changed.
+
+### Installed it under the old name?
+
+Before 0.1.0 shipped as `activity-log`, the plugin was called `claude-activity-panel`, a name Claude Code refuses to load. If you installed that, swap it:
+
+```
+/plugin uninstall claude-activity-panel@miladsorour-plugins
+/plugin marketplace update miladsorour-plugins
+/plugin install activity-log@miladsorour-plugins
+```
 
 ## Try it: demo prompt
 
@@ -71,12 +118,12 @@ What to look for: two subagents on different models in **Flow** and **Cost**, th
 
 ## Development
 
-```
-claude plugin validate .
+```bash
+claude plugin validate .claude-plugin/plugin.json
 claude plugin test .
 ```
 
-The tests draw every tab on the terminal, desktop, VS Code and mobile surfaces.
+Validate the plugin manifest by path: this folder also holds the marketplace manifest, and `claude plugin validate .` checks only that one. Use Claude Code 2.1.309 or newer; older validators reject the mod's `update($, …)` calls. The tests draw every tab on the terminal, desktop, VS Code and mobile surfaces. When you release, bump `version` in `.claude-plugin/plugin.json` and add an entry to `CHANGELOG` in `hooks/lib.ts`.
 
 ## License
 
