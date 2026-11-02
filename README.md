@@ -38,7 +38,9 @@ Real screenshots from the Claude desktop app. The English one is cropped to leav
 In a terminal session:
 
 ```
-/plugin install claude-activity-panel --marketplace miladSorour/claude-activity-panel
+/plugin marketplace add miladSorour/claude-activity-panel
+
+/plugin install claude-activity-panel@miladsorour-plugins
 ```
 
 Choose the user scope when asked. The panel then opens in every session. Reopen or close it with `/activity`.
