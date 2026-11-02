@@ -40,7 +40,7 @@ In a terminal session:
 ```
 /plugin marketplace add miladSorour/claude-activity-panel
 
-/plugin install claude-activity-panel@miladsorour-plugins
+/plugin install activity-log@miladsorour-plugins
 ```
 
 Choose the user scope when asked. The panel then opens in every session. Reopen or close it with `/activity`.
