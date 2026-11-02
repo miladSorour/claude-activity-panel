@@ -38,10 +38,14 @@ import {
   staticHint,
   sumTokens,
   tipsFor,
+  PRICE_URL,
+  parsePrices,
   usd,
+  usePrices,
   weekKey,
   wordDiff,
 } from './lib'
+import type { Price } from './lib'
 
 // Change a tag when that value's fields change: it declines what an earlier
 // version stored, which outlives a reload.
@@ -115,6 +119,8 @@ let lastSections: { id: string; scope: string; text: string }[] = []
 let openSection = ''
 // Which page the Settings tab shows; its menu on the right switches between them.
 let settingsPage: 'prompt' | 'history' = 'prompt'
+let sectionsOpen = false
+let showAllSections = false
 
 async function loadRouting($: EngineInterface) {
   if (!routingPath) return
@@ -123,6 +129,27 @@ async function loadRouting($: EngineInterface) {
     routingText = (await $.fs.read(routingPath)).trim()
   } catch {
     routingText = DEFAULT_MODEL_ROUTING.trim()
+  }
+}
+
+// Model prices come from the public list once a day; the store keeps the day's copy, and the built-in table covers offline.
+const PRICE_TTL = 86_400_000
+
+async function refreshPrices($: EngineInterface) {
+  const now = await $.clock.now()
+  const cached = (await $.store.get('prices')) as { at: number; prices: Record<string, Price> } | undefined
+  if (cached) usePrices(cached.prices)
+  if (cached && now - cached.at < PRICE_TTL) return
+  try {
+    const response = await $.http.fetch(PRICE_URL)
+    if (!response.ok) return
+    const prices = parsePrices(response.text)
+    if (Object.keys(prices).length === 0) return
+    usePrices(prices)
+    await $.store.set('prices', { at: now, prices })
+    await update($, tick, n => n + 1)
+  } catch {
+    // Offline or a changed format: yesterday's prices, or the built-in table, stay in use.
   }
 }
 
@@ -987,18 +1014,111 @@ async function drawPane(
     openSection = openSection === id ? '' : id
     void redraw()
   }
-  // System prompt: the editable routing section, then every section Claude last received.
+  const toggleSections = () => {
+    sectionsOpen = !sectionsOpen
+    void redraw()
+  }
+  const showMoreSections = () => {
+    showAllSections = true
+    void redraw()
+  }
+  // The sections Claude last received: shared, then session, sizes on the right, the person's routing last in orange.
+  const sizeOf = (chars: number) => (chars >= 1000 ? `${(chars / 1000).toFixed(1)}k` : `${chars}`)
+  const totalChars = lastSections.reduce((sum, section) => sum + section.text.length, 0)
+  const routingSection = lastSections.find(section => section.id === ROUTING_ID)
+  const shared = lastSections.filter(section => section.scope === 'shared')
+  const session = lastSections.filter(section => section.scope !== 'shared' && section.id !== ROUTING_ID)
+  const shownSession = showAllSections ? session : session.slice(0, 5)
+  const sectionRow = (section: { id: string; text: string }) => {
+    const isOpen = openSection === section.id
+    return (
+      <Box flexDirection="column">
+        <Box flexDirection="row" justifyContent="space-between">
+          <Button key={`section-${section.id}`} plain dimColor={!isOpen} label={isOpen ? `▾ ${section.id}` : section.id} onPress={toggleSection(section.id)} />
+          <Text dimColor>{sizeOf(section.text.length)}</Text>
+        </Box>
+        {isOpen && (
+          <Box paddingLeft={2}>
+            <Text size="caption" mono dimColor wrap="wrap">
+              {section.text}
+            </Text>
+          </Box>
+        )}
+      </Box>
+    )
+  }
+  const sectionsBox = (
+    <Box flexDirection="column">
+      <Box flexDirection="row" justifyContent="space-between">
+        <Button key="sections-toggle" plain label="System prompt sent" onPress={toggleSections} />
+        <Text size="caption" dimColor>
+          {lastPromptAt
+            ? `${clock(lastPromptAt).slice(0, 5)} · ${lastSections.length} sections · ${sizeOf(totalChars)} chars ${sectionsOpen ? '▴' : '▾'}`
+            : 'after your next message'}
+        </Text>
+      </Box>
+      {sectionsOpen && (
+        <Box flexDirection="column" marginTop={1}>
+          {shared.length > 0 && (
+            <Text size="caption" dimColor>
+              Shared
+            </Text>
+          )}
+          {shared.map(sectionRow)}
+          {session.length > 0 && (
+            <Box marginTop={1}>
+              <Text size="caption" dimColor>
+                Session
+              </Text>
+            </Box>
+          )}
+          {shownSession.map(sectionRow)}
+          {session.length > shownSession.length && (
+            <Button key="sections-more" plain dimColor label={`+ ${session.length - shownSession.length} more`} onPress={showMoreSections} />
+          )}
+          {routingSection && (
+            <Box flexDirection="row" justifyContent="space-between">
+              <Box flexDirection="row">
+                <Text color="claude">● </Text>
+                <Button key={`section-${ROUTING_ID}`} plain label="model routing" onPress={toggleSection(ROUTING_ID)} />
+                <Text dimColor> · yours</Text>
+              </Box>
+              <Text color="claude">{sizeOf(routingSection.text.length)}</Text>
+            </Box>
+          )}
+          {routingSection && openSection === ROUTING_ID && (
+            <Box paddingLeft={2}>
+              <Text size="caption" mono dimColor wrap="wrap">
+                {routingSection.text}
+              </Text>
+            </Box>
+          )}
+        </Box>
+      )}
+    </Box>
+  )
+  // System prompt: the routing editor (the page's one border), then the sections Claude last received, folded.
+  const draft = routingDraft ?? routingText
   const promptPage = (
     <Box flexDirection="column" gap={1}>
-      <Text bold>Model routing</Text>
-      <Text dimColor wrap="wrap">
-        Added to Claude's system prompt whenever it can start subagents. Edit it and press Enter to save; save it empty to turn it off.
-      </Text>
+      <Box flexDirection="column">
+        <Box flexDirection="row" justifyContent="space-between">
+          <Text size="heading" weight="medium">
+            Model routing
+          </Text>
+          <Text size="caption" color={routingText ? 'success' : 'inactive'}>
+            {routingText ? '● on' : '○ off'}
+          </Text>
+        </Box>
+        <Text size="caption" dimColor wrap="wrap">
+          Sent to Claude when it can start subagents. Empty turns it off.
+        </Text>
+      </Box>
       {Input ? (
         <Input
           key="routing-input"
-          rows={8}
-          value={routingDraft ?? routingText}
+          rows={20}
+          value={draft}
           submitLabel="save"
           onInput={value => {
             routingDraft = value
@@ -1006,64 +1126,78 @@ async function drawPane(
           onSubmit={value => void saveRouting($, value)}
         />
       ) : (
-        <Text wrap="wrap">{routingText || '(off)'}</Text>
-      )}
-      <Box flexDirection="row" columnGap={2}>
-        <Button key="routing-reset" plain dimColor label="reset to default" onPress={() => void saveRouting($, DEFAULT_MODEL_ROUTING)} />
-        <Text dimColor wrap="truncate-end">
-          {routingPath}
+        <Text mono wrap="wrap">
+          {routingText || '(off)'}
         </Text>
+      )}
+      <Box flexDirection="row" justifyContent="space-between">
+        <Text size="caption" dimColor>
+          {`${draft ? draft.split('\n').length : 0} lines · Enter to save`}
+        </Text>
+        <Button key="routing-reset" plain dimColor label="Reset to default" onPress={() => void saveRouting($, DEFAULT_MODEL_ROUTING)} />
       </Box>
-      <Text bold>{lastPromptAt ? `System prompt Claude received at ${clock(lastPromptAt)}` : 'System prompt'}</Text>
-      {lastSections.length === 0 && <Text dimColor>Appears after your next message.</Text>}
-      {lastSections.map(s => (
-        <Box flexDirection="column">
-          <Button
-            key={`section-${s.id}`}
-            plain
-            dimColor={s.id !== ROUTING_ID}
-            label={`${openSection === s.id ? '▾' : '▸'} ${s.id} · ${s.scope} · ${s.text.length} chars`}
-            onPress={toggleSection(s.id)}
-          />
-          {openSection === s.id && <Text wrap="wrap">{s.text}</Text>}
-        </Box>
-      ))}
+      {sectionsBox}
     </Box>
   )
-  // Version history: what each release of the panel changed, one short line per change.
+  // Version history: each release spaced apart, no boxes; the installed one first and bright, older ones dimmed.
   const historyPage = (
     <Box flexDirection="column" gap={1}>
-      <Text bold>Version history</Text>
       {CHANGELOG.map((release, i) => (
         <Box flexDirection="column">
-          <Text bold={i === 0} dimColor={i > 0}>
-            {`v${release.version} · ${release.date}${i === 0 ? ' · this version' : ''}`}
+          <Box flexDirection="row" justifyContent="space-between">
+            <Text size="heading" weight="medium" dimColor={i > 0}>
+              {`v${release.version}`}
+            </Text>
+            {i === 0 && (
+              <Text size="caption" color="suggestion">
+                installed
+              </Text>
+            )}
+          </Box>
+          <Text size="caption" dimColor>
+            {new Date(`${release.date}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
           </Text>
           {release.changes.map(change => (
-            <Text dimColor={i > 0} wrap="wrap">{`  • ${change}`}</Text>
+            <Text dimColor={i > 0} wrap="wrap">{`• ${change}`}</Text>
           ))}
         </Box>
       ))}
     </Box>
   )
-  const SETTINGS_MENU: [typeof settingsPage, string][] = [
-    ['prompt', 'System prompt'],
-    ['history', 'Version history'],
+  const SETTINGS_MENU: [typeof settingsPage, string, string][] = [
+    ['prompt', '✎', 'System prompt'],
+    ['history', '↺', 'Version history'],
   ]
+  // The menu keeps one width on every page, so switching pages never moves the content.
   const settingsTab = (
     <Box flexDirection="row" columnGap={2}>
       <Box flexDirection="column" flexGrow={1} flexShrink={1}>
         {settingsPage === 'history' ? historyPage : promptPage}
       </Box>
-      <Box flexDirection="column" flexShrink={0} width={20} rowGap={1}>
-        <Text dimColor>Settings</Text>
-        <Box flexDirection="column">
-          {SETTINGS_MENU.map(([id, name]) => (
-            <Box key={`settings-row-${id}`} paddingX={1} backgroundColor={settingsPage === id ? 'promptBorder' : undefined}>
-              <Button key={`settings-${id}`} plain dimColor={settingsPage !== id} label={name} onPress={goTo(id)} />
-            </Box>
-          ))}
+      <Box flexDirection="column" flexShrink={0} width={20}>
+        <Box paddingLeft={2} paddingBottom={1}>
+          <Text size="caption" dimColor>
+            Settings
+          </Text>
         </Box>
+        {SETTINGS_MENU.map(([id, icon, name]) => {
+          // The selected page is marked by an orange bar and icon, the rest dimmed.
+          const isOn = settingsPage === id
+          return (
+            // Bar, icon and label each sit in a fixed-width column, so icons of different widths still line up.
+            <Box key={`settings-row-${id}`} flexDirection="row">
+              <Box width={2} flexShrink={0}>
+                <Text color="claude">{isOn ? '▎' : ' '}</Text>
+              </Box>
+              <Box width={3} flexShrink={0} justifyContent="center">
+                <Text color={isOn ? 'claude' : undefined} dimColor={!isOn}>
+                  {icon}
+                </Text>
+              </Box>
+              <Button key={`settings-${id}`} plain dimColor={!isOn} label={name} onPress={goTo(id)} />
+            </Box>
+          )
+        })}
       </Box>
     </Box>
   )
@@ -1309,6 +1443,14 @@ function startTicker($: EngineInterface) {
   })
 }
 
+// /activity and /activity-log: the pane on the right opens, the band above the input opens or folds.
+async function openActivity($: EngineInterface) {
+  if ((await read($, placement)) === 'right') await $.ui.open({ id: PANE, title: 'Activity' })
+  else await update($, view, was => ({ ...was, bandOpen: !was.bandOpen }))
+  await flush($)
+  return { text: `Activity pane opened. Log file: ${logPath}` }
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const now = await $.clock.now()
@@ -1323,6 +1465,8 @@ export const register: Register = on => {
     routingPath = `${homeDir}/.claude/activity-panel/model-routing.md`
     promptPath = `${homeDir}/.claude/activity-panel/last-system-prompt.md`
     await loadRouting($)
+    // Off a timer: the price list is 3 MB and never holds up the session's start.
+    $.clock.after(0, () => void refreshPrices($))
 
     const stored = ((await $.store.get('sessions')) as SessionSummary[] | undefined) ?? []
     await update($, history, () => stored.filter(s => s.id !== sessionId))
@@ -1355,6 +1499,10 @@ export const register: Register = on => {
       description: 'Open the live activity pane (flow, cost, plugins, tips, English coach)',
     })
     await $.command.register({
+      name: 'activity-log',
+      description: 'Reopen the Activity panel after closing it',
+    })
+    await $.command.register({
       name: 'model-routing',
       description: 'Show the model routing prompt and the file to edit it in',
     })
@@ -1364,12 +1512,9 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('command.run', { command: 'activity' }, async $ => {
-    if ((await read($, placement)) === 'right') await $.ui.open({ id: PANE, title: 'Activity' })
-    else await update($, view, was => ({ ...was, bandOpen: !was.bandOpen }))
-    await flush($)
-    return { text: `Activity pane opened. Log file: ${logPath}` }
-  })
+  on('command.run', { command: 'activity' }, $ => openActivity($))
+
+  on('command.run', { command: 'activity-log' }, $ => openActivity($))
 
   on('prompt.submit', async ($, e, next) => {
     const ran = await next(e)

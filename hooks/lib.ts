@@ -16,11 +16,52 @@ const PRICES: [string, number, number, number?][] = [
   ['claude-haiku', 1, 5],
 ]
 
+// $ per million tokens for one model, as fetched from the public price list.
+export type Price = { input: number; output: number; cacheRead: number; cacheWrite: number }
+
+// Prices fetched today (see PRICE_URL), by model id; the table above answers models they do not list.
+// The one piece of state here: register.tsx sets it after a fetch or from the day's cache.
+let fetchedPrices: Record<string, Price> = {}
+export const usePrices = (prices: Record<string, Price>) => {
+  fetchedPrices = prices
+}
+
+export const PRICE_URL = 'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json'
+
+// Keeps the Anthropic Claude entries of LiteLLM's price list, converted to $ per million tokens.
+export function parsePrices(json: string): Record<string, Price> {
+  const out: Record<string, Price> = {}
+  // Per token to per million, rounded so 4e-7 reads 0.4, not 0.39999999999999997.
+  const perMillion = (value: unknown) => Math.round(Number(value) * 1e12) / 1e6
+  const all = JSON.parse(json) as Record<string, Record<string, unknown>>
+  for (const [id, entry] of Object.entries(all)) {
+    if (!id.startsWith('claude-') || entry.litellm_provider !== 'anthropic') continue
+    const input = perMillion(entry.input_cost_per_token)
+    const output = perMillion(entry.output_cost_per_token)
+    if (!(input > 0) || !(output > 0)) continue
+    const cacheRead = perMillion(entry.cache_read_input_token_cost)
+    const cacheWrite = perMillion(entry.cache_creation_input_token_cost)
+    out[id] = { input, output, cacheRead: cacheRead > 0 ? cacheRead : input * 0.1, cacheWrite: cacheWrite > 0 ? cacheWrite : input * 1.25 }
+  }
+  return out
+}
+
+function priceOf(model: string): Price | undefined {
+  // Longest fetched id the model starts with, so claude-opus-5-5 wins over claude-opus-5.
+  const id = Object.keys(fetchedPrices)
+    .filter(key => model.startsWith(key))
+    .sort((a, b) => b.length - a.length)[0]
+  if (id) return fetchedPrices[id]
+  const row = PRICES.find(([prefix]) => model.startsWith(prefix))
+  if (!row) return undefined
+  const [, input, output, cacheRead = input * 0.1] = row
+  return { input, output, cacheRead, cacheWrite: input * 1.25 }
+}
+
 export function costOf(model: string, m: ModelTotal): number {
-  const price = PRICES.find(([prefix]) => model.startsWith(prefix))
+  const price = priceOf(model)
   if (!price) return 0
-  const [, input, output, cacheRead = input * 0.1] = price
-  return (m.input * input + m.output * output + m.cacheRead * cacheRead + m.cacheWrite * input * 1.25) / 1_000_000
+  return (m.input * price.input + m.output * price.output + m.cacheRead * price.cacheRead + m.cacheWrite * price.cacheWrite) / 1_000_000
 }
 
 export const sumTokens = (m: ModelTotal) => m.input + m.output + m.cacheRead + m.cacheWrite
@@ -458,7 +499,13 @@ export const CHANGELOG: { version: string; date: string; changes: string[] }[] =
   {
     version: '0.3.0',
     date: '2026-11-02',
-    changes: ['Added Settings tab', 'Edit the model routing prompt in Settings → System prompt', 'Added version history'],
+    changes: [
+      'Added Settings tab',
+      'Edit the model routing prompt in Settings → System prompt',
+      'Added version history',
+      'Reopen the panel with /activity-log',
+      'Model prices fetched daily, with built-in prices as fallback',
+    ],
   },
   {
     version: '0.2.0',

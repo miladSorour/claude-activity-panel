@@ -45,7 +45,18 @@ In a terminal session:
 /plugin install activity-log@miladsorour-plugins
 ```
 
-Choose the user scope when asked. The panel then opens in every session. Reopen or close it with `/activity`, or with **▸ open Activity panel** above the input box when the panel is on the right and closed.
+Choose the user scope when asked. The panel then opens in every session.
+
+## Reopen the panel
+
+Closed the panel? Type either command in the prompt box:
+
+```
+/activity-log
+/activity
+```
+
+Both open the panel on the right, or open and fold it when it sits above the input box. When the panel is on the right and closed, you can also click **▸ open Activity panel** above the input box.
 
 ## Requirements
 
@@ -112,7 +123,7 @@ What to look for: two subagents on different models in **Flow** and **Cost**, th
 ## Privacy and cost
 
 - Everything is computed locally from the session. Nothing leaves your machine except the small Haiku calls for hints and the English coach. Those can be turned off in the English tab.
-- Costs are **estimates** from list prices, not invoices.
+- Costs are **estimates** from list prices, not invoices. Prices come from LiteLLM's public price list ([`model_prices_and_context_window.json`](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json)), downloaded at most once a day and cached in the plugin store; it sends nothing about you. Offline, or for a model the list doesn't have, a built-in table is used.
 - Band scores are a rough estimate, not an official IELTS score.
 - Session summaries are stored in the plugin store on your machine, and logs are written to `~/.claude/activity-logs/`.
 

@@ -242,12 +242,47 @@ test('Settings has a menu on the right: System prompt and a short version histor
   expect(await pane.find({ key: 'settings-history' })).toBeDefined()
 
   await pane.press({ key: 'settings-history' })
-  expect((await pane.find({ type: 'Text', text: /^Version history$/ }))?.text).toBe('Version history')
-  expect((await pane.find({ type: 'Text', text: /this version/ }))?.text).toMatch(/^v0\.3\.0 · /)
-  expect((await pane.find({ type: 'Text', text: /Added Settings tab/ }))?.text).toBe('  • Added Settings tab')
+  expect((await pane.find({ type: 'Text', text: /^v0\.3\.0$/ }))?.text).toBe('v0.3.0')
+  expect((await pane.find({ type: 'Text', text: /^installed$/ }))?.text).toBe('installed')
+  expect((await pane.find({ type: 'Text', text: /Added Settings tab/ }))?.text).toBe('• Added Settings tab')
   expect(await pane.find({ type: 'Text', text: /^Model routing$/ })).toBeUndefined()
 
   await pane.press({ key: 'settings-prompt' })
   expect((await pane.find({ type: 'Text', text: /^Model routing$/ }))?.text).toBe('Model routing')
+  expect((await pane.find({ type: 'Text', text: /^● on$/ }))?.text).toBe('● on')
+  // The sections Claude received stay folded until opened.
+  expect(await pane.find({ key: 'section-intro' })).toBeUndefined()
+  await pane.unmount()
+})
+
+test('the sections Claude received are grouped, sized, and the routing section comes last', async ($, on) => {
+  mock.clock(on)
+  on('store.get', () => ({ value: undefined }))
+  on('store.set', () => ({ value: undefined }))
+  on('fs.exists', () => ({ value: true }))
+  on('fs.read', () => ({ value: 'route searches to haiku' }))
+  on('fs.write', () => ({ value: undefined }))
+  on('tool.list', () => ({ value: [] }))
+  on('command.register', (_, e) => ({ value: { command: e.name } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('prompt.compose', () => ({
+    sections: [
+      { id: 'lean_body', text: 'x'.repeat(2000), scope: 'shared' },
+      { id: 'memory', text: 'remember things', scope: 'session' },
+    ],
+  }))
+
+  await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
+  await $.prompt.compose({ model: 'claude-opus-5-5', promptModel: 'claude-opus-5-5', surfaces: [], outputStyle: null, traits: [], tools: ['Agent'] })
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await pane.press({ key: 'tab-settings' })
+  expect(await pane.find({ key: 'section-memory' })).toBeUndefined()
+
+  await pane.press({ key: 'sections-toggle' })
+  expect((await pane.find({ type: 'Text', text: /^Shared$/ }))?.text).toBe('Shared')
+  expect((await pane.find({ type: 'Text', text: /^2\.0k$/ }))?.text).toBe('2.0k')
+  expect((await pane.find({ type: 'Text', text: /^ · yours$/ }))?.text).toBe(' · yours')
+  await pane.press({ key: 'section-memory' })
+  expect((await pane.find({ type: 'Text', text: /^remember things$/ }))?.text).toBe('remember things')
   await pane.unmount()
 })
